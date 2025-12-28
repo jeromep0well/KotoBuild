@@ -1,48 +1,155 @@
-name: Koto iOS Build
+name: Koto Pro Build
 on: workflow_dispatch
 
 jobs:
   build:
     runs-on: macos-15
     steps:
-      # 1. PREPARE
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
       
-      # 2. GENERATE THE SWIFT CODE
-      - name: Create App Code
+      # ---------------------------------------------------
+      # 1. INJECT THE FULL AI SOURCE CODE
+      # ---------------------------------------------------
+      - name: Write Real App
         run: |
-          cat <<EOF > App.swift
+          cat <<'EOF' > App.swift
           import SwiftUI
           import Translation
           import Speech
           import AVFoundation
-          @main struct KotoApp: App { var body: some Scene { WindowGroup { ContentView() } } }
-          struct ContentView: View {
-              @State var txt = "Tap to Listen"; @State var on = false
+
+          @main
+          struct KotoApp: App {
+              var body: some Scene {
+                  WindowGroup { KotoView() }
+              }
+          }
+
+          struct KotoView: View {
+              @State private var text = ""
+              @State private var result = ""
+              @State private var isListening = false
+              @State private var config: TranslationSession.Configuration?
+              private let speech = NeuralMic()
+              private let voice = AVSpeechSynthesizer()
+              private let haptic = UIImpactFeedbackGenerator(style: .heavy)
+
               var body: some View {
                   ZStack {
-                      Color.black.ignoresSafeArea()
-                      VStack {
-                          Text("Koto AI").font(.largeTitle).foregroundStyle(.white)
-                          Text(txt).foregroundStyle(.blue).padding()
-                          Button(action:{on.toggle();txt=on ? "Listening...":"Ready"}){
-                              Image(systemName: on ? "stop.circle.fill":"mic.circle.fill").resizable().frame(width:80,height:80).foregroundStyle(on ? .red:.blue)
+                      // iOS 18 Mesh Gradient
+                      MeshGradient(width: 3, height: 3, points: [
+                          [0,0], [0.5,0], [1,0],
+                          [0,0.5], [isListening ? 0.2:0.8, 0.5], [1,0.5],
+                          [0,1], [0.5,1], [1,1]
+                      ], colors: [
+                          .black, .black, .black,
+                          .black, isListening ? .red.opacity(0.5) : .blue.opacity(0.3), .black,
+                          .black, .black, .black
+                      ]).ignoresSafeArea()
+
+                      VStack(spacing: 30) {
+                          // Header
+                          HStack {
+                              VStack(alignment: .leading) {
+                                  Text("A18 NEURAL").font(.caption2).fontWeight(.black).foregroundStyle(.blue)
+                                  Text("Koto AI").font(.largeTitle).fontWeight(.heavy).foregroundStyle(.white)
+                              }
+                              Spacer()
+                              Image(systemName: "cpu.fill").font(.largeTitle).foregroundStyle(.blue)
+                          }.padding(.horizontal, 30).padding(.top, 40)
+
+                          Spacer()
+
+                          // Output
+                          if !result.isEmpty {
+                              VStack(alignment: .leading, spacing: 10) {
+                                  Text(result).font(.system(size: 32, weight: .bold, design: .rounded)).foregroundStyle(.white)
+                                  Button(action: { speak(result) }) {
+                                      Label("Replay", systemImage: "speaker.wave.2.fill")
+                                          .font(.caption.bold()).padding(10).background(.white.opacity(0.1)).clipShape(Capsule())
+                                  }
+                              }
+                              .padding(30).background(.ultraThinMaterial).clipShape(RoundedRectangle(cornerRadius: 30))
+                          } else if !text.isEmpty {
+                              Text(text).font(.title3).foregroundStyle(.gray).multilineTextAlignment(.center).padding()
                           }
+
+                          Spacer()
+
+                          // Orb
+                          Button(action: toggleMic) {
+                              ZStack {
+                                  Circle().fill(isListening ? .red : .blue).frame(width: 120, height: 120).blur(radius: 40).opacity(0.5)
+                                  Circle().fill(LinearGradient(colors: [isListening ? .red : .blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing))
+                                      .frame(width: 100, height: 100)
+                                      .overlay(Image(systemName: isListening ? "stop.fill" : "mic.fill").font(.largeTitle).foregroundStyle(.white))
+                              }
+                          }
+                          .scaleEffect(isListening ? 1.1 : 1.0)
+                          
+                          Text(isListening ? "LISTENING..." : "TAP TO SPEAK").font(.caption).fontWeight(.bold).foregroundStyle(.gray).padding(.bottom, 50)
                       }
                   }
+                  .translationTask(config) { session in
+                      do {
+                          let r = try await session.translate(text)
+                          result = r.targetText
+                          haptic.impactOccurred()
+                          speak(result)
+                      } catch { print(error) }
+                  }
               }
+
+              func toggleMic() {
+                  haptic.impactOccurred()
+                  if isListening {
+                      isListening = false
+                      speech.stop()
+                      if !text.isEmpty { config = .init(source: .init(identifier: "en"), target: .init(identifier: "ja")) }
+                  } else {
+                      text = ""; result = ""; isListening = true
+                      speech.start { t in text = t }
+                  }
+              }
+
+              func speak(_ t: String) {
+                  let u = AVSpeechUtterance(string: t)
+                  u.voice = AVSpeechSynthesisVoice(language: "ja-JP")
+                  u.rate = 0.5
+                  voice.speak(u)
+              }
+          }
+
+          class NeuralMic {
+              let r = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+              var req: SFSpeechAudioBufferRecognitionRequest?
+              var task: SFSpeechRecognitionTask?
+              let eng = AVAudioEngine()
+              
+              func start(on: @escaping (String)->Void) {
+                  req = SFSpeechAudioBufferRecognitionRequest()
+                  req?.requiresOnDeviceRecognition = true
+                  let node = eng.inputNode
+                  node.installTap(onBus: 0, bufferSize: 1024, format: node.outputFormat(forBus: 0)) { b, _ in self.req?.append(b) }
+                  try? eng.start()
+                  task = r?.recognitionTask(with: req!) { res, _ in if let res = res { on(res.bestTranscription.formattedString) } }
+              }
+              func stop() { eng.stop(); eng.inputNode.removeTap(onBus: 0); req?.endAudio(); task?.cancel() }
           }
           EOF
 
-      # 3. GENERATE PROJECT FILE (JSON method to avoid indentation errors)
-      - name: Create Project Config
+      # ---------------------------------------------------
+      # 2. GENERATE CONFIG (JSON)
+      # ---------------------------------------------------
+      - name: Config
         run: |
-          echo '{"name":"KotoAI","targets":{"KotoAI":{"type":"application","platform":"iOS","deploymentTarget":"18.0","sources":["App.swift"],"settings":{"PRODUCT_BUNDLE_IDENTIFIER":"com.koto.ai","CODE_SIGNING_ALLOWED":"NO"},"info":{"path":"Info.plist","properties":{"NSMicrophoneUsageDescription":"Mic"}}}}}' > project.json
+          echo '{"name":"KotoAI","targets":{"KotoAI":{"type":"application","platform":"iOS","deploymentTarget":"18.0","sources":["App.swift"],"settings":{"PRODUCT_BUNDLE_IDENTIFIER":"com.koto.ai","CODE_SIGNING_ALLOWED":"NO"},"info":{"path":"Info.plist","properties":{"NSMicrophoneUsageDescription":"AI","NSSpeechRecognitionUsageDescription":"AI"}}}}}' > project.json
           echo '<?xml version="1.0"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict></dict></plist>' > Info.plist
 
-      # 4. BUILD
-      - name: Build IPA
+      # ---------------------------------------------------
+      # 3. BUILD
+      # ---------------------------------------------------
+      - name: Build
         run: |
           brew install xcodegen
           xcodegen generate --spec project.json
@@ -51,10 +158,9 @@ jobs:
           cp -r build.xcarchive/Products/Applications/KotoAI.app Payload/
           zip -r KotoAI.ipa Payload
 
-      # 5. UPLOAD
       - uses: actions/upload-artifact@v4
         with:
-          name: KotoAI-IPA
+          name: KotoAI-Pro
           path: KotoAI.ipa
 
 
