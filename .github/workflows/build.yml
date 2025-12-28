@@ -8,9 +8,9 @@ jobs:
       - uses: actions/checkout@v4
       
       # ---------------------------------------------------
-      # 1. INJECT THE FULL AI SOURCE CODE
+      # 1. WRITE THE FULL "PRO" APP CODE
       # ---------------------------------------------------
-      - name: Write Real App
+      - name: Write App Code
         run: |
           cat <<'EOF' > App.swift
           import SwiftUI
@@ -18,121 +18,226 @@ jobs:
           import Speech
           import AVFoundation
 
+          // --- MAIN APP ENTRY ---
           @main
           struct KotoApp: App {
               var body: some Scene {
-                  WindowGroup { KotoView() }
+                  WindowGroup {
+                      MainTabView()
+                          .preferredColorScheme(.dark) // Force Dark Mode for the "Pro" look
+                  }
               }
           }
 
-          struct KotoView: View {
-              @State private var text = ""
-              @State private var result = ""
+          // --- TABS ---
+          struct MainTabView: View {
+              var body: some View {
+                  TabView {
+                      TranslatorView()
+                          .tabItem { Label("Translate", systemImage: "mic.fill") }
+                      HistoryView()
+                          .tabItem { Label("History", systemImage: "clock.fill") }
+                  }
+                  .accentColor(.blue)
+              }
+          }
+
+          // --- TRANSLATOR SCREEN ---
+          struct TranslatorView: View {
+              @State private var inputText = ""
+              @State private var outputText = ""
               @State private var isListening = false
-              @State private var config: TranslationSession.Configuration?
-              private let speech = NeuralMic()
-              private let voice = AVSpeechSynthesizer()
-              private let haptic = UIImpactFeedbackGenerator(style: .heavy)
+              @State private var translationConfig: TranslationSession.Configuration?
+              @AppStorage("history") private var historyData: Data = Data()
+              
+              private let speechManager = SpeechManager()
+              private let synthesizer = AVSpeechSynthesizer()
+              private let haptics = UIImpactFeedbackGenerator(style: .medium)
 
               var body: some View {
                   ZStack {
-                      // iOS 18 Mesh Gradient
+                      // Dynamic Background
                       MeshGradient(width: 3, height: 3, points: [
                           [0,0], [0.5,0], [1,0],
                           [0,0.5], [isListening ? 0.2:0.8, 0.5], [1,0.5],
                           [0,1], [0.5,1], [1,1]
                       ], colors: [
                           .black, .black, .black,
-                          .black, isListening ? .red.opacity(0.5) : .blue.opacity(0.3), .black,
+                          .black, isListening ? .red.opacity(0.3) : .blue.opacity(0.2), .black,
                           .black, .black, .black
                       ]).ignoresSafeArea()
 
-                      VStack(spacing: 30) {
+                      VStack(spacing: 20) {
                           // Header
                           HStack {
-                              VStack(alignment: .leading) {
-                                  Text("A18 NEURAL").font(.caption2).fontWeight(.black).foregroundStyle(.blue)
-                                  Text("Koto AI").font(.largeTitle).fontWeight(.heavy).foregroundStyle(.white)
-                              }
+                              Text("KOTO AI").font(.headline).fontWeight(.black).tracking(2).foregroundStyle(.blue)
                               Spacer()
-                              Image(systemName: "cpu.fill").font(.largeTitle).foregroundStyle(.blue)
-                          }.padding(.horizontal, 30).padding(.top, 40)
-
-                          Spacer()
-
-                          // Output
-                          if !result.isEmpty {
-                              VStack(alignment: .leading, spacing: 10) {
-                                  Text(result).font(.system(size: 32, weight: .bold, design: .rounded)).foregroundStyle(.white)
-                                  Button(action: { speak(result) }) {
-                                      Label("Replay", systemImage: "speaker.wave.2.fill")
-                                          .font(.caption.bold()).padding(10).background(.white.opacity(0.1)).clipShape(Capsule())
+                              if !outputText.isEmpty {
+                                  Button(action: saveToHistory) {
+                                      Image(systemName: "star.fill").foregroundStyle(.yellow)
                                   }
                               }
-                              .padding(30).background(.ultraThinMaterial).clipShape(RoundedRectangle(cornerRadius: 30))
-                          } else if !text.isEmpty {
-                              Text(text).font(.title3).foregroundStyle(.gray).multilineTextAlignment(.center).padding()
+                          }.padding(.horizontal, 24).padding(.top, 20)
+
+                          // Input Area (Text)
+                          ZStack(alignment: .topLeading) {
+                              if inputText.isEmpty { Text("Tap mic to speak...").foregroundStyle(.gray) }
+                              Text(inputText).foregroundStyle(.white).font(.title3)
+                          }
+                          .padding()
+                          .frame(maxWidth: .infinity, alignment: .leading)
+                          .frame(height: 100)
+                          .background(.white.opacity(0.05))
+                          .cornerRadius(20)
+                          .padding(.horizontal)
+
+                          // Output Area (Translation)
+                          if !outputText.isEmpty {
+                              VStack(alignment: .leading, spacing: 15) {
+                                  Text(outputText)
+                                      .font(.system(size: 28, weight: .bold, design: .rounded))
+                                      .foregroundStyle(.white)
+                                  
+                                  // Kanji Finder (Mini Feature)
+                                  let kanji = outputText.filter { $0.unicodeScalars.first!.value >= 0x4E00 && $0.unicodeScalars.first!.value <= 0x9FAF }
+                                  if !kanji.isEmpty {
+                                      HStack {
+                                          Text("KANJI FOUND:").font(.caption).fontWeight(.bold).foregroundStyle(.gray)
+                                          ForEach(Array(Set(kanji)), id: \.self) { char in
+                                              Text(String(char)).padding(4).background(.white.opacity(0.1)).cornerRadius(4)
+                                          }
+                                      }
+                                  }
+
+                                  HStack {
+                                      Button(action: { speak(outputText) }) {
+                                          HStack { Image(systemName: "speaker.wave.2.fill"); Text("Speak") }
+                                              .font(.caption.bold())
+                                              .padding(10).background(.blue).cornerRadius(20).foregroundStyle(.white)
+                                      }
+                                      Spacer()
+                                      Button(action: { UIPasteboard.general.string = outputText }) {
+                                          Image(systemName: "doc.on.doc").foregroundStyle(.gray)
+                                      }
+                                  }
+                              }
+                              .padding(24)
+                              .background(.ultraThinMaterial)
+                              .cornerRadius(30)
+                              .padding(.horizontal)
+                              .transition(.scale.combined(with: .opacity))
                           }
 
                           Spacer()
 
-                          // Orb
+                          // Mic Button
                           Button(action: toggleMic) {
                               ZStack {
-                                  Circle().fill(isListening ? .red : .blue).frame(width: 120, height: 120).blur(radius: 40).opacity(0.5)
+                                  Circle().fill(isListening ? .red : .blue).frame(width: 110, height: 110).blur(radius: 30).opacity(0.4)
                                   Circle().fill(LinearGradient(colors: [isListening ? .red : .blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing))
-                                      .frame(width: 100, height: 100)
+                                      .frame(width: 90, height: 90)
                                       .overlay(Image(systemName: isListening ? "stop.fill" : "mic.fill").font(.largeTitle).foregroundStyle(.white))
+                                      .shadow(radius: 10)
                               }
                           }
                           .scaleEffect(isListening ? 1.1 : 1.0)
                           
-                          Text(isListening ? "LISTENING..." : "TAP TO SPEAK").font(.caption).fontWeight(.bold).foregroundStyle(.gray).padding(.bottom, 50)
+                          Text(isListening ? "Listening..." : "Tap to Translate")
+                              .font(.caption).fontWeight(.bold).foregroundStyle(.gray).padding(.bottom, 20)
                       }
                   }
-                  .translationTask(config) { session in
+                  // Native Translation Trigger
+                  .translationTask(translationConfig) { session in
                       do {
-                          let r = try await session.translate(text)
-                          result = r.targetText
-                          haptic.impactOccurred()
-                          speak(result)
-                      } catch { print(error) }
+                          let response = try await session.translate(inputText)
+                          outputText = response.targetText
+                          haptics.impactOccurred()
+                          saveToHistory()
+                          speak(outputText)
+                      } catch {
+                          outputText = "Error: \(error.localizedDescription)"
+                      }
                   }
               }
 
+              // Logic
               func toggleMic() {
-                  haptic.impactOccurred()
+                  haptics.impactOccurred()
                   if isListening {
                       isListening = false
-                      speech.stop()
-                      if !text.isEmpty { config = .init(source: .init(identifier: "en"), target: .init(identifier: "ja")) }
+                      speechManager.stop()
+                      if !inputText.isEmpty {
+                          translationConfig = .init(source: .init(identifier: "en"), target: .init(identifier: "ja"))
+                      }
                   } else {
-                      text = ""; result = ""; isListening = true
-                      speech.start { t in text = t }
+                      inputText = ""; outputText = ""; isListening = true
+                      speechManager.start { res in inputText = res }
                   }
               }
 
-              func speak(_ t: String) {
-                  let u = AVSpeechUtterance(string: t)
+              func speak(_ text: String) {
+                  let u = AVSpeechUtterance(string: text)
                   u.voice = AVSpeechSynthesisVoice(language: "ja-JP")
                   u.rate = 0.5
-                  voice.speak(u)
+                  synthesizer.speak(u)
+              }
+
+              func saveToHistory() {
+                  guard !inputText.isEmpty && !outputText.isEmpty else { return }
+                  var history = (try? JSONDecoder().decode([HistoryItem].self, from: historyData)) ?? []
+                  let newItem = HistoryItem(original: inputText, translated: outputText, date: Date())
+                  if !history.contains(where: { $0.original == newItem.original }) {
+                      history.insert(newItem, at: 0)
+                      if history.count > 20 { history.removeLast() }
+                      if let encoded = try? JSONEncoder().encode(history) { historyData = encoded }
+                  }
               }
           }
 
-          class NeuralMic {
-              let r = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
-              var req: SFSpeechAudioBufferRecognitionRequest?
-              var task: SFSpeechRecognitionTask?
-              let eng = AVAudioEngine()
+          // --- HISTORY SCREEN ---
+          struct HistoryView: View {
+              @AppStorage("history") private var historyData: Data = Data()
               
-              func start(on: @escaping (String)->Void) {
+              var body: some View {
+                  let history = (try? JSONDecoder().decode([HistoryItem].self, from: historyData)) ?? []
+                  NavigationView {
+                      List(history) { item in
+                          VStack(alignment: .leading) {
+                              Text(item.original).font(.caption).foregroundStyle(.gray)
+                              Text(item.translated).font(.headline).foregroundStyle(.white)
+                          }
+                          .listRowBackground(Color.black.opacity(0.5))
+                      }
+                      .navigationTitle("History")
+                      .scrollContentBackground(.hidden)
+                      .background(Color.black.ignoresSafeArea())
+                  }
+              }
+          }
+
+          struct HistoryItem: Identifiable, Codable {
+              var id = UUID()
+              let original: String
+              let translated: String
+              let date: Date
+          }
+
+          // --- SPEECH LOGIC ---
+          class SpeechManager {
+              private let r = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+              private var req: SFSpeechAudioBufferRecognitionRequest?
+              private var task: SFSpeechRecognitionTask?
+              private let eng = AVAudioEngine()
+
+              func start(update: @escaping (String) -> Void) {
                   req = SFSpeechAudioBufferRecognitionRequest()
                   req?.requiresOnDeviceRecognition = true
                   let node = eng.inputNode
-                  node.installTap(onBus: 0, bufferSize: 1024, format: node.outputFormat(forBus: 0)) { b, _ in self.req?.append(b) }
+                  let format = node.outputFormat(forBus: 0)
+                  node.installTap(onBus: 0, bufferSize: 1024, format: format) { b, _ in self.req?.append(b) }
+                  eng.prepare()
                   try? eng.start()
-                  task = r?.recognitionTask(with: req!) { res, _ in if let res = res { on(res.bestTranscription.formattedString) } }
+                  task = r?.recognitionTask(with: req!) { res, _ in if let res = res { update(res.bestTranscription.formattedString) } }
               }
               func stop() { eng.stop(); eng.inputNode.removeTap(onBus: 0); req?.endAudio(); task?.cancel() }
           }
@@ -141,15 +246,15 @@ jobs:
       # ---------------------------------------------------
       # 2. GENERATE CONFIG (JSON)
       # ---------------------------------------------------
-      - name: Config
+      - name: Write Config
         run: |
-          echo '{"name":"KotoAI","targets":{"KotoAI":{"type":"application","platform":"iOS","deploymentTarget":"18.0","sources":["App.swift"],"settings":{"PRODUCT_BUNDLE_IDENTIFIER":"com.koto.ai","CODE_SIGNING_ALLOWED":"NO"},"info":{"path":"Info.plist","properties":{"NSMicrophoneUsageDescription":"AI","NSSpeechRecognitionUsageDescription":"AI"}}}}}' > project.json
+          echo '{"name":"KotoAI","targets":{"KotoAI":{"type":"application","platform":"iOS","deploymentTarget":"18.0","sources":["App.swift"],"settings":{"PRODUCT_BUNDLE_IDENTIFIER":"com.koto.ai","CODE_SIGNING_ALLOWED":"NO"},"info":{"path":"Info.plist","properties":{"NSMicrophoneUsageDescription":"We need your mic to listen.","NSSpeechRecognitionUsageDescription":"We need speech recognition to process audio."}}}}}' > project.json
           echo '<?xml version="1.0"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict></dict></plist>' > Info.plist
 
       # ---------------------------------------------------
       # 3. BUILD
       # ---------------------------------------------------
-      - name: Build
+      - name: Build IPA
         run: |
           brew install xcodegen
           xcodegen generate --spec project.json
