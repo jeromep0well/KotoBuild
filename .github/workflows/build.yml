@@ -1,4 +1,4 @@
-name: Koto Pro Build
+name: Koto Premium Build
 on: workflow_dispatch
 
 jobs:
@@ -8,9 +8,9 @@ jobs:
       - uses: actions/checkout@v4
       
       # ---------------------------------------------------
-      # 1. WRITE THE FULL "PRO" APP CODE
+      # 1. INJECT THE PREMIUM UI CODE
       # ---------------------------------------------------
-      - name: Write App Code
+      - name: Write Premium App
         run: |
           cat <<'EOF' > App.swift
           import SwiftUI
@@ -18,243 +18,242 @@ jobs:
           import Speech
           import AVFoundation
 
-          // --- MAIN APP ENTRY ---
+          // --- APP ENTRY ---
           @main
           struct KotoApp: App {
+              init() {
+                  // Force Dark Mode for that "Premium" look
+                  UITabBar.appearance().barTintColor = .black
+                  UITabBar.appearance().backgroundColor = .black
+              }
               var body: some Scene {
                   WindowGroup {
-                      MainTabView()
-                          .preferredColorScheme(.dark) // Force Dark Mode for the "Pro" look
+                      MainView().preferredColorScheme(.dark)
                   }
               }
           }
 
-          // --- TABS ---
-          struct MainTabView: View {
+          struct MainView: View {
               var body: some View {
                   TabView {
-                      TranslatorView()
-                          .tabItem { Label("Translate", systemImage: "mic.fill") }
-                      HistoryView()
-                          .tabItem { Label("History", systemImage: "clock.fill") }
-                  }
-                  .accentColor(.blue)
+                      TranslatorScreen().tabItem { Label("Voice", systemImage: "mic.fill") }
+                      HistoryScreen().tabItem { Label("History", systemImage: "clock.fill") }
+                  }.accentColor(.blue)
               }
           }
 
-          // --- TRANSLATOR SCREEN ---
-          struct TranslatorView: View {
-              @State private var inputText = ""
-              @State private var outputText = ""
+          // --- MAIN TRANSLATOR SCREEN ---
+          struct TranslatorScreen: View {
+              @State private var text = ""
+              @State private var result = ""
               @State private var isListening = false
-              @State private var translationConfig: TranslationSession.Configuration?
-              @AppStorage("history") private var historyData: Data = Data()
+              @State private var config: TranslationSession.Configuration?
+              @AppStorage("history_json") private var historyJSON = "[]"
               
-              private let speechManager = SpeechManager()
-              private let synthesizer = AVSpeechSynthesizer()
-              private let haptics = UIImpactFeedbackGenerator(style: .medium)
+              private let speech = NeuralMic()
+              private let voice = AVSpeechSynthesizer()
+              private let haptic = UIImpactFeedbackGenerator(style: .heavy)
 
               var body: some View {
                   ZStack {
-                      // Dynamic Background
-                      MeshGradient(width: 3, height: 3, points: [
-                          [0,0], [0.5,0], [1,0],
-                          [0,0.5], [isListening ? 0.2:0.8, 0.5], [1,0.5],
-                          [0,1], [0.5,1], [1,1]
-                      ], colors: [
-                          .black, .black, .black,
-                          .black, isListening ? .red.opacity(0.3) : .blue.opacity(0.2), .black,
-                          .black, .black, .black
-                      ]).ignoresSafeArea()
+                      // 1. BACKGROUND GRADIENT (Matches the original web look)
+                      LinearGradient(colors: [Color(red: 0.1, green: 0.1, blue: 0.2), .black], startPoint: .top, endPoint: .bottom).ignoresSafeArea()
+                      
+                      // Ambient Glow
+                      Circle().fill(Color.blue.opacity(0.1)).frame(width: 300).blur(radius: 60).offset(y: -200)
 
                       VStack(spacing: 20) {
-                          // Header
+                          // 2. HEADER
                           HStack {
-                              Text("KOTO AI").font(.headline).fontWeight(.black).tracking(2).foregroundStyle(.blue)
-                              Spacer()
-                              if !outputText.isEmpty {
-                                  Button(action: saveToHistory) {
-                                      Image(systemName: "star.fill").foregroundStyle(.yellow)
-                                  }
+                              VStack(alignment: .leading) {
+                                  Text("VOICE AI").font(.caption).fontWeight(.black).foregroundStyle(.blue).tracking(2)
+                                  Text("Koto AI").font(.largeTitle).fontWeight(.bold).foregroundStyle(.white)
                               }
-                          }.padding(.horizontal, 24).padding(.top, 20)
+                              Spacer()
+                              Image(systemName: "waveform.circle.fill").font(.largeTitle).foregroundStyle(.blue)
+                          }.padding(.horizontal, 24).padding(.top, 40)
 
-                          // Input Area (Text)
-                          ZStack(alignment: .topLeading) {
-                              if inputText.isEmpty { Text("Tap mic to speak...").foregroundStyle(.gray) }
-                              Text(inputText).foregroundStyle(.white).font(.title3)
-                          }
-                          .padding()
-                          .frame(maxWidth: .infinity, alignment: .leading)
-                          .frame(height: 100)
-                          .background(.white.opacity(0.05))
-                          .cornerRadius(20)
-                          .padding(.horizontal)
+                          Spacer()
 
-                          // Output Area (Translation)
-                          if !outputText.isEmpty {
-                              VStack(alignment: .leading, spacing: 15) {
-                                  Text(outputText)
-                                      .font(.system(size: 28, weight: .bold, design: .rounded))
-                                      .foregroundStyle(.white)
-                                  
-                                  // Kanji Finder (Mini Feature)
-                                  let kanji = outputText.filter { $0.unicodeScalars.first!.value >= 0x4E00 && $0.unicodeScalars.first!.value <= 0x9FAF }
-                                  if !kanji.isEmpty {
-                                      HStack {
-                                          Text("KANJI FOUND:").font(.caption).fontWeight(.bold).foregroundStyle(.gray)
-                                          ForEach(Array(Set(kanji)), id: \.self) { char in
-                                              Text(String(char)).padding(4).background(.white.opacity(0.1)).cornerRadius(4)
-                                          }
-                                      }
-                                  }
-
+                          // 3. TRANSLATION CARD (Glassmorphism)
+                          if !result.isEmpty {
+                              VStack(alignment: .leading, spacing: 16) {
                                   HStack {
-                                      Button(action: { speak(outputText) }) {
-                                          HStack { Image(systemName: "speaker.wave.2.fill"); Text("Speak") }
-                                              .font(.caption.bold())
-                                              .padding(10).background(.blue).cornerRadius(20).foregroundStyle(.white)
-                                      }
+                                      Label("AI Result", systemImage: "sparkles").font(.caption).fontWeight(.bold).foregroundStyle(.blue)
                                       Spacer()
-                                      Button(action: { UIPasteboard.general.string = outputText }) {
-                                          Image(systemName: "doc.on.doc").foregroundStyle(.gray)
+                                      Button(action: { speak(result) }) {
+                                          Image(systemName: "speaker.wave.2.fill").foregroundStyle(.white.opacity(0.8))
                                       }
                                   }
+                                  Text(result)
+                                      .font(.system(size: 32, weight: .bold, design: .rounded))
+                                      .foregroundStyle(.white)
+                                      .multilineTextAlignment(.leading)
+                                  
+                                  Divider().background(.white.opacity(0.2))
+                                  
+                                  Text("Japanese • Polite Form").font(.caption).foregroundStyle(.gray)
                               }
                               .padding(24)
                               .background(.ultraThinMaterial)
-                              .cornerRadius(30)
+                              .clipShape(RoundedRectangle(cornerRadius: 24))
+                              .overlay(RoundedRectangle(cornerRadius: 24).stroke(.white.opacity(0.1), lineWidth: 1))
                               .padding(.horizontal)
-                              .transition(.scale.combined(with: .opacity))
+                              .transition(.move(edge: .bottom).combined(with: .opacity))
+                          } else if !text.isEmpty {
+                              // Live Transcript
+                              Text(text)
+                                  .font(.title2)
+                                  .foregroundStyle(.gray)
+                                  .multilineTextAlignment(.center)
+                                  .padding()
                           }
 
                           Spacer()
 
-                          // Mic Button
-                          Button(action: toggleMic) {
-                              ZStack {
-                                  Circle().fill(isListening ? .red : .blue).frame(width: 110, height: 110).blur(radius: 30).opacity(0.4)
-                                  Circle().fill(LinearGradient(colors: [isListening ? .red : .blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing))
-                                      .frame(width: 90, height: 90)
-                                      .overlay(Image(systemName: isListening ? "stop.fill" : "mic.fill").font(.largeTitle).foregroundStyle(.white))
-                                      .shadow(radius: 10)
+                          // 4. THE GLOWING ORB BUTTON
+                          VStack(spacing: 20) {
+                              Button(action: toggleMic) {
+                                  ZStack {
+                                      // Outer Pulse
+                                      if isListening {
+                                          Circle().fill(Color.red.opacity(0.2))
+                                              .frame(width: 140, height: 140)
+                                              .scaleEffect(1.2).blur(radius: 20)
+                                      }
+                                      
+                                      // Core Orb
+                                      Circle()
+                                          .fill(LinearGradient(colors: [isListening ? .red : .blue, isListening ? .orange : .indigo], startPoint: .topLeading, endPoint: .bottomTrailing))
+                                          .frame(width: 100, height: 100)
+                                          .overlay(
+                                              Image(systemName: isListening ? "stop.fill" : "mic.fill")
+                                                  .font(.system(size: 36, weight: .bold))
+                                                  .foregroundStyle(.white)
+                                          )
+                                          .shadow(color: (isListening ? .red : .blue).opacity(0.5), radius: 20, x: 0, y: 10)
+                                  }
                               }
+                              .buttonStyle(PlainButtonStyle())
+                              
+                              Text(isListening ? "LISTENING..." : "TAP TO SPEAK")
+                                  .font(.caption).fontWeight(.black).foregroundStyle(.white.opacity(0.5)).tracking(1)
                           }
-                          .scaleEffect(isListening ? 1.1 : 1.0)
-                          
-                          Text(isListening ? "Listening..." : "Tap to Translate")
-                              .font(.caption).fontWeight(.bold).foregroundStyle(.gray).padding(.bottom, 20)
+                          .padding(.bottom, 30)
                       }
                   }
-                  // Native Translation Trigger
-                  .translationTask(translationConfig) { session in
+                  // Native Translation Logic
+                  .translationTask(config) { session in
                       do {
-                          let response = try await session.translate(inputText)
-                          outputText = response.targetText
-                          haptics.impactOccurred()
-                          saveToHistory()
-                          speak(outputText)
-                      } catch {
-                          outputText = "Error: \(error.localizedDescription)"
-                      }
+                          let r = try await session.translate(text)
+                          result = r.targetText
+                          haptic.impactOccurred()
+                          speak(result)
+                          addToHistory(original: text, translated: result)
+                      } catch { print(error) }
                   }
               }
 
-              // Logic
+              // Actions
               func toggleMic() {
-                  haptics.impactOccurred()
+                  haptic.impactOccurred()
                   if isListening {
                       isListening = false
-                      speechManager.stop()
-                      if !inputText.isEmpty {
-                          translationConfig = .init(source: .init(identifier: "en"), target: .init(identifier: "ja"))
+                      speech.stop()
+                      if !text.isEmpty {
+                          // Start Translation
+                          config = .init(source: .init(identifier: "en"), target: .init(identifier: "ja"))
                       }
                   } else {
-                      inputText = ""; outputText = ""; isListening = true
-                      speechManager.start { res in inputText = res }
+                      text = ""; result = ""; isListening = true
+                      speech.start { t in text = t }
                   }
               }
 
-              func speak(_ text: String) {
-                  let u = AVSpeechUtterance(string: text)
+              func speak(_ t: String) {
+                  let u = AVSpeechUtterance(string: t)
                   u.voice = AVSpeechSynthesisVoice(language: "ja-JP")
                   u.rate = 0.5
-                  synthesizer.speak(u)
+                  voice.speak(u)
               }
-
-              func saveToHistory() {
-                  guard !inputText.isEmpty && !outputText.isEmpty else { return }
-                  var history = (try? JSONDecoder().decode([HistoryItem].self, from: historyData)) ?? []
-                  let newItem = HistoryItem(original: inputText, translated: outputText, date: Date())
-                  if !history.contains(where: { $0.original == newItem.original }) {
-                      history.insert(newItem, at: 0)
-                      if history.count > 20 { history.removeLast() }
-                      if let encoded = try? JSONEncoder().encode(history) { historyData = encoded }
-                  }
+              
+              func addToHistory(original: String, translated: String) {
+                  struct Item: Codable { let original: String; let translated: String }
+                  var list = (try? JSONDecoder().decode([Item].self, from: historyJSON.data(using: .utf8)!)) ?? []
+                  list.insert(Item(original: original, translated: translated), at: 0)
+                  if let data = try? JSONEncoder().encode(list) { historyJSON = String(data: data, encoding: .utf8) ?? "[]" }
               }
           }
 
           // --- HISTORY SCREEN ---
-          struct HistoryView: View {
-              @AppStorage("history") private var historyData: Data = Data()
+          struct HistoryScreen: View {
+              @AppStorage("history_json") private var historyJSON = "[]"
               
               var body: some View {
-                  let history = (try? JSONDecoder().decode([HistoryItem].self, from: historyData)) ?? []
                   NavigationView {
-                      List(history) { item in
-                          VStack(alignment: .leading) {
-                              Text(item.original).font(.caption).foregroundStyle(.gray)
-                              Text(item.translated).font(.headline).foregroundStyle(.white)
+                      ZStack {
+                          Color.black.ignoresSafeArea()
+                          ScrollView {
+                              VStack(spacing: 12) {
+                                  let list = (try? JSONDecoder().decode([HItem].self, from: historyJSON.data(using: .utf8)!)) ?? []
+                                  ForEach(list, id: \.translated) { item in
+                                      HStack {
+                                          VStack(alignment: .leading) {
+                                              Text(item.original).font(.caption).foregroundStyle(.gray)
+                                              Text(item.translated).font(.headline).foregroundStyle(.white)
+                                          }
+                                          Spacer()
+                                      }
+                                      .padding()
+                                      .background(Color.white.opacity(0.1))
+                                      .cornerRadius(12)
+                                  }
+                              }.padding()
                           }
-                          .listRowBackground(Color.black.opacity(0.5))
                       }
                       .navigationTitle("History")
-                      .scrollContentBackground(.hidden)
-                      .background(Color.black.ignoresSafeArea())
+                      .navigationBarTitleDisplayMode(.inline)
                   }
               }
+              struct HItem: Codable { let original: String; let translated: String }
           }
 
-          struct HistoryItem: Identifiable, Codable {
-              var id = UUID()
-              let original: String
-              let translated: String
-              let date: Date
-          }
-
-          // --- SPEECH LOGIC ---
-          class SpeechManager {
-              private let r = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
-              private var req: SFSpeechAudioBufferRecognitionRequest?
-              private var task: SFSpeechRecognitionTask?
-              private let eng = AVAudioEngine()
-
-              func start(update: @escaping (String) -> Void) {
+          // --- SPEECH MANAGER ---
+          class NeuralMic {
+              let r = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+              var req: SFSpeechAudioBufferRecognitionRequest?
+              var task: SFSpeechRecognitionTask?
+              let eng = AVAudioEngine()
+              
+              func start(on: @escaping (String)->Void) {
+                  let session = AVAudioSession.sharedInstance()
+                  try? session.setCategory(.record, mode: .measurement, options: .duckOthers)
+                  try? session.setActive(true)
+                  
                   req = SFSpeechAudioBufferRecognitionRequest()
                   req?.requiresOnDeviceRecognition = true
                   let node = eng.inputNode
-                  let format = node.outputFormat(forBus: 0)
-                  node.installTap(onBus: 0, bufferSize: 1024, format: format) { b, _ in self.req?.append(b) }
+                  node.installTap(onBus: 0, bufferSize: 1024, format: node.outputFormat(forBus: 0)) { b, _ in self.req?.append(b) }
                   eng.prepare()
                   try? eng.start()
-                  task = r?.recognitionTask(with: req!) { res, _ in if let res = res { update(res.bestTranscription.formattedString) } }
+                  task = r?.recognitionTask(with: req!) { res, _ in if let res = res { on(res.bestTranscription.formattedString) } }
               }
               func stop() { eng.stop(); eng.inputNode.removeTap(onBus: 0); req?.endAudio(); task?.cancel() }
           }
           EOF
 
       # ---------------------------------------------------
-      # 2. GENERATE CONFIG (JSON)
+      # 2. GENERATE CONFIG
       # ---------------------------------------------------
       - name: Write Config
         run: |
-          echo '{"name":"KotoAI","targets":{"KotoAI":{"type":"application","platform":"iOS","deploymentTarget":"18.0","sources":["App.swift"],"settings":{"PRODUCT_BUNDLE_IDENTIFIER":"com.koto.ai","CODE_SIGNING_ALLOWED":"NO"},"info":{"path":"Info.plist","properties":{"NSMicrophoneUsageDescription":"We need your mic to listen.","NSSpeechRecognitionUsageDescription":"We need speech recognition to process audio."}}}}}' > project.json
+          echo '{"name":"KotoAI","targets":{"KotoAI":{"type":"application","platform":"iOS","deploymentTarget":"18.0","sources":["App.swift"],"settings":{"PRODUCT_BUNDLE_IDENTIFIER":"com.koto.ai","CODE_SIGNING_ALLOWED":"NO"},"info":{"path":"Info.plist","properties":{"NSMicrophoneUsageDescription":"Mic","NSSpeechRecognitionUsageDescription":"Speech"}}}}}' > project.json
           echo '<?xml version="1.0"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict></dict></plist>' > Info.plist
 
       # ---------------------------------------------------
       # 3. BUILD
       # ---------------------------------------------------
-      - name: Build IPA
+      - name: Build
         run: |
           brew install xcodegen
           xcodegen generate --spec project.json
@@ -265,7 +264,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: KotoAI-Pro
+          name: KotoAI-Premium
           path: KotoAI.ipa
 
 
