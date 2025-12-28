@@ -1,4 +1,4 @@
-name: Koto Premium Build
+name: Koto Ultimate Build
 on: workflow_dispatch
 
 jobs:
@@ -8,9 +8,9 @@ jobs:
       - uses: actions/checkout@v4
       
       # ---------------------------------------------------
-      # 1. INJECT THE PREMIUM UI CODE
+      # 1. INJECT THE ROBUST APP CODE
       # ---------------------------------------------------
-      - name: Write Premium App
+      - name: Write App Code
         run: |
           cat <<'EOF' > App.swift
           import SwiftUI
@@ -18,18 +18,14 @@ jobs:
           import Speech
           import AVFoundation
 
-          // --- APP ENTRY ---
           @main
           struct KotoApp: App {
               init() {
-                  // Force Dark Mode for that "Premium" look
                   UITabBar.appearance().barTintColor = .black
                   UITabBar.appearance().backgroundColor = .black
               }
               var body: some Scene {
-                  WindowGroup {
-                      MainView().preferredColorScheme(.dark)
-                  }
+                  WindowGroup { MainView().preferredColorScheme(.dark) }
               }
           }
 
@@ -42,130 +38,97 @@ jobs:
               }
           }
 
-          // --- MAIN TRANSLATOR SCREEN ---
           struct TranslatorScreen: View {
               @State private var text = ""
               @State private var result = ""
+              @State private var status = "Ready" // DEBUG STATUS
               @State private var isListening = false
               @State private var config: TranslationSession.Configuration?
               @AppStorage("history_json") private var historyJSON = "[]"
               
-              private let speech = NeuralMic()
+              private let speech = SpeechManager()
               private let voice = AVSpeechSynthesizer()
               private let haptic = UIImpactFeedbackGenerator(style: .heavy)
 
               var body: some View {
                   ZStack {
-                      // 1. BACKGROUND GRADIENT (Matches the original web look)
-                      LinearGradient(colors: [Color(red: 0.1, green: 0.1, blue: 0.2), .black], startPoint: .top, endPoint: .bottom).ignoresSafeArea()
+                      // Beautiful Dark Gradient
+                      LinearGradient(colors: [Color(red: 0.05, green: 0.05, blue: 0.1), .black], startPoint: .top, endPoint: .bottom).ignoresSafeArea()
                       
-                      // Ambient Glow
-                      Circle().fill(Color.blue.opacity(0.1)).frame(width: 300).blur(radius: 60).offset(y: -200)
-
                       VStack(spacing: 20) {
-                          // 2. HEADER
+                          // HEADER
                           HStack {
-                              VStack(alignment: .leading) {
-                                  Text("VOICE AI").font(.caption).fontWeight(.black).foregroundStyle(.blue).tracking(2)
-                                  Text("Koto AI").font(.largeTitle).fontWeight(.bold).foregroundStyle(.white)
-                              }
+                              Text("KOTO AI").font(.title2).fontWeight(.black).foregroundStyle(.white)
                               Spacer()
-                              Image(systemName: "waveform.circle.fill").font(.largeTitle).foregroundStyle(.blue)
+                              Text("PRO").font(.caption).fontWeight(.bold).padding(6).background(.blue).cornerRadius(6)
                           }.padding(.horizontal, 24).padding(.top, 40)
 
                           Spacer()
 
-                          // 3. TRANSLATION CARD (Glassmorphism)
+                          // RESULT CARD
                           if !result.isEmpty {
-                              VStack(alignment: .leading, spacing: 16) {
+                              VStack(alignment: .leading, spacing: 15) {
+                                  Text(result).font(.system(size: 32, weight: .bold, design: .rounded)).foregroundStyle(.white)
                                   HStack {
-                                      Label("AI Result", systemImage: "sparkles").font(.caption).fontWeight(.bold).foregroundStyle(.blue)
-                                      Spacer()
                                       Button(action: { speak(result) }) {
-                                          Image(systemName: "speaker.wave.2.fill").foregroundStyle(.white.opacity(0.8))
+                                          Label("Speak", systemImage: "speaker.wave.2.fill")
+                                              .font(.caption.bold()).padding(8).background(.white.opacity(0.1)).clipShape(Capsule())
                                       }
+                                      Spacer()
                                   }
-                                  Text(result)
-                                      .font(.system(size: 32, weight: .bold, design: .rounded))
-                                      .foregroundStyle(.white)
-                                      .multilineTextAlignment(.leading)
-                                  
-                                  Divider().background(.white.opacity(0.2))
-                                  
-                                  Text("Japanese • Polite Form").font(.caption).foregroundStyle(.gray)
                               }
-                              .padding(24)
-                              .background(.ultraThinMaterial)
-                              .clipShape(RoundedRectangle(cornerRadius: 24))
-                              .overlay(RoundedRectangle(cornerRadius: 24).stroke(.white.opacity(0.1), lineWidth: 1))
-                              .padding(.horizontal)
-                              .transition(.move(edge: .bottom).combined(with: .opacity))
+                              .padding(24).background(.ultraThinMaterial).cornerRadius(24).padding(.horizontal)
                           } else if !text.isEmpty {
-                              // Live Transcript
-                              Text(text)
-                                  .font(.title2)
-                                  .foregroundStyle(.gray)
-                                  .multilineTextAlignment(.center)
-                                  .padding()
+                              Text(text).font(.title3).foregroundStyle(.gray).multilineTextAlignment(.center).padding()
                           }
 
                           Spacer()
 
-                          // 4. THE GLOWING ORB BUTTON
-                          VStack(spacing: 20) {
-                              Button(action: toggleMic) {
-                                  ZStack {
-                                      // Outer Pulse
-                                      if isListening {
-                                          Circle().fill(Color.red.opacity(0.2))
-                                              .frame(width: 140, height: 140)
-                                              .scaleEffect(1.2).blur(radius: 20)
-                                      }
-                                      
-                                      // Core Orb
-                                      Circle()
-                                          .fill(LinearGradient(colors: [isListening ? .red : .blue, isListening ? .orange : .indigo], startPoint: .topLeading, endPoint: .bottomTrailing))
-                                          .frame(width: 100, height: 100)
-                                          .overlay(
-                                              Image(systemName: isListening ? "stop.fill" : "mic.fill")
-                                                  .font(.system(size: 36, weight: .bold))
-                                                  .foregroundStyle(.white)
-                                          )
-                                          .shadow(color: (isListening ? .red : .blue).opacity(0.5), radius: 20, x: 0, y: 10)
-                                  }
+                          // STATUS LOG (So you know it's working)
+                          Text(status).font(.caption).foregroundStyle(.gray).padding(.bottom, 10)
+
+                          // MIC BUTTON
+                          Button(action: toggleMic) {
+                              ZStack {
+                                  Circle().fill(isListening ? .red : .blue).frame(width: 100, height: 100).blur(radius: isListening ? 20 : 0).opacity(0.5)
+                                  Circle().fill(LinearGradient(colors: [isListening ? .red : .blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing))
+                                      .frame(width: 80, height: 80)
+                                      .overlay(Image(systemName: isListening ? "stop.fill" : "mic.fill").font(.largeTitle).foregroundStyle(.white))
                               }
-                              .buttonStyle(PlainButtonStyle())
-                              
-                              Text(isListening ? "LISTENING..." : "TAP TO SPEAK")
-                                  .font(.caption).fontWeight(.black).foregroundStyle(.white.opacity(0.5)).tracking(1)
                           }
-                          .padding(.bottom, 30)
+                          .padding(.bottom, 40)
                       }
                   }
-                  // Native Translation Logic
+                  // TRANSLATION TRIGGER
                   .translationTask(config) { session in
                       do {
+                          status = "Translating..."
                           let r = try await session.translate(text)
                           result = r.targetText
+                          status = "Done"
                           haptic.impactOccurred()
                           speak(result)
                           addToHistory(original: text, translated: result)
-                      } catch { print(error) }
+                      } catch {
+                          status = "Error: \(error.localizedDescription)"
+                      }
                   }
               }
 
-              // Actions
               func toggleMic() {
                   haptic.impactOccurred()
                   if isListening {
                       isListening = false
                       speech.stop()
                       if !text.isEmpty {
-                          // Start Translation
+                          status = "Processing..."
                           config = .init(source: .init(identifier: "en"), target: .init(identifier: "ja"))
+                      } else {
+                          status = "No speech detected"
                       }
                   } else {
                       text = ""; result = ""; isListening = true
+                      status = "Listening..."
                       speech.start { t in text = t }
                   }
               }
@@ -185,58 +148,54 @@ jobs:
               }
           }
 
-          // --- HISTORY SCREEN ---
           struct HistoryScreen: View {
               @AppStorage("history_json") private var historyJSON = "[]"
-              
               var body: some View {
                   NavigationView {
-                      ZStack {
-                          Color.black.ignoresSafeArea()
-                          ScrollView {
-                              VStack(spacing: 12) {
-                                  let list = (try? JSONDecoder().decode([HItem].self, from: historyJSON.data(using: .utf8)!)) ?? []
-                                  ForEach(list, id: \.translated) { item in
-                                      HStack {
-                                          VStack(alignment: .leading) {
-                                              Text(item.original).font(.caption).foregroundStyle(.gray)
-                                              Text(item.translated).font(.headline).foregroundStyle(.white)
-                                          }
-                                          Spacer()
-                                      }
-                                      .padding()
-                                      .background(Color.white.opacity(0.1))
-                                      .cornerRadius(12)
-                                  }
-                              }.padding()
+                      List {
+                          let list = (try? JSONDecoder().decode([HItem].self, from: historyJSON.data(using: .utf8)!)) ?? []
+                          ForEach(list, id: \.translated) { item in
+                              VStack(alignment: .leading) {
+                                  Text(item.original).font(.caption).foregroundStyle(.gray)
+                                  Text(item.translated).font(.headline).foregroundStyle(.white)
+                              }
+                              .listRowBackground(Color.white.opacity(0.1))
                           }
                       }
                       .navigationTitle("History")
-                      .navigationBarTitleDisplayMode(.inline)
+                      .scrollContentBackground(.hidden)
+                      .background(Color.black.ignoresSafeArea())
                   }
               }
               struct HItem: Codable { let original: String; let translated: String }
           }
 
-          // --- SPEECH MANAGER ---
-          class NeuralMic {
+          class SpeechManager {
               let r = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
               var req: SFSpeechAudioBufferRecognitionRequest?
               var task: SFSpeechRecognitionTask?
               let eng = AVAudioEngine()
               
               func start(on: @escaping (String)->Void) {
-                  let session = AVAudioSession.sharedInstance()
-                  try? session.setCategory(.record, mode: .measurement, options: .duckOthers)
-                  try? session.setActive(true)
+                  // Setup Audio Session
+                  let s = AVAudioSession.sharedInstance()
+                  try? s.setCategory(.record, mode: .measurement, options: .duckOthers)
+                  try? s.setActive(true, options: .notifyOthersOnDeactivation)
                   
                   req = SFSpeechAudioBufferRecognitionRequest()
-                  req?.requiresOnDeviceRecognition = true
+                  // REMOVED 'requiresOnDeviceRecognition' TO PREVENT CRASHES
+                  
                   let node = eng.inputNode
-                  node.installTap(onBus: 0, bufferSize: 1024, format: node.outputFormat(forBus: 0)) { b, _ in self.req?.append(b) }
+                  let format = node.outputFormat(forBus: 0)
+                  node.removeTap(onBus: 0) // Safety Check
+                  node.installTap(onBus: 0, bufferSize: 1024, format: format) { b, _ in self.req?.append(b) }
+                  
                   eng.prepare()
                   try? eng.start()
-                  task = r?.recognitionTask(with: req!) { res, _ in if let res = res { on(res.bestTranscription.formattedString) } }
+                  
+                  task = r?.recognitionTask(with: req!) { res, _ in 
+                      if let res = res { on(res.bestTranscription.formattedString) }
+                  }
               }
               func stop() { eng.stop(); eng.inputNode.removeTap(onBus: 0); req?.endAudio(); task?.cancel() }
           }
@@ -264,7 +223,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: KotoAI-Premium
+          name: KotoAI-Ultimate
           path: KotoAI.ipa
 
 
