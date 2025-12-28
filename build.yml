@@ -1,0 +1,60 @@
+name: Koto iOS Build
+on: workflow_dispatch
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      # 1. PREPARE
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      # 2. GENERATE THE SWIFT CODE
+      - name: Create App Code
+        run: |
+          cat <<EOF > App.swift
+          import SwiftUI
+          import Translation
+          import Speech
+          import AVFoundation
+          @main struct KotoApp: App { var body: some Scene { WindowGroup { ContentView() } } }
+          struct ContentView: View {
+              @State var txt = "Tap to Listen"; @State var on = false
+              var body: some View {
+                  ZStack {
+                      Color.black.ignoresSafeArea()
+                      VStack {
+                          Text("Koto AI").font(.largeTitle).foregroundStyle(.white)
+                          Text(txt).foregroundStyle(.blue).padding()
+                          Button(action:{on.toggle();txt=on ? "Listening...":"Ready"}){
+                              Image(systemName: on ? "stop.circle.fill":"mic.circle.fill").resizable().frame(width:80,height:80).foregroundStyle(on ? .red:.blue)
+                          }
+                      }
+                  }
+              }
+          }
+          EOF
+
+      # 3. GENERATE PROJECT FILE (JSON method to avoid indentation errors)
+      - name: Create Project Config
+        run: |
+          echo '{"name":"KotoAI","targets":{"KotoAI":{"type":"application","platform":"iOS","deploymentTarget":"18.0","sources":["App.swift"],"settings":{"PRODUCT_BUNDLE_IDENTIFIER":"com.koto.ai","CODE_SIGNING_ALLOWED":"NO"},"info":{"path":"Info.plist","properties":{"NSMicrophoneUsageDescription":"Mic"}}}}}' > project.json
+          echo '<?xml version="1.0"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict></dict></plist>' > Info.plist
+
+      # 4. BUILD
+      - name: Build IPA
+        run: |
+          brew install xcodegen
+          xcodegen generate --spec project.json
+          xcodebuild archive -project KotoAI.xcodeproj -scheme KotoAI -configuration Release -archivePath build.xcarchive CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+          mkdir Payload
+          cp -r build.xcarchive/Products/Applications/KotoAI.app Payload/
+          zip -r KotoAI.ipa Payload
+
+      # 5. UPLOAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KotoAI-IPA
+          path: KotoAI.ipa
+
+
